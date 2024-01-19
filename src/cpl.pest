@@ -1,0 +1,87 @@
+// chinese.pest
+chinese = _{ SOI ~ (expr ~ ";")+ ~ EOI }
+
+expr              = _{
+    create_variable_expr
+  | assignment_expr
+  | if_statement
+  | loop_statement
+  | for_statement
+  | array_loop
+  | function_expr
+  | function_declare_statement
+}
+string            = @{ "\"" ~ (!("\"" | "\r" | " " | "\n") ~ ANY)* ~ "\"" }
+COMMENT           = _{ ("/*" ~ (!"*/" ~ ANY)* ~ "*/") | ("//" ~ ANY*) }
+right_element     = _{
+    compute_expr
+  | function_expr
+  | string
+  | number
+  | variable
+  | boolean_expr
+  | array_expr
+}
+compare_op        = @{ "大于" | "小于" | "等于" }
+bin_compare_expr  =  { right_element ~ compare_op ~ right_element }
+compare_element   = _{
+    boolean_expr
+  | bin_compare_expr
+  | function_expr
+  | variable
+}
+boolean_value     = @{ "真" | "假" }
+array_expr        =  { ("[" ~ "]") | ("[" ~ right_element ~ ("," ~ right_element)* ~ "]") }
+boolean_and_or_op = @{ "与" | "或" }
+boolean_not_op    = @{ "非" }
+boolean_expr      =  {
+    boolean_value
+  | ((function_expr | variable) ~ boolean_and_or_op ~ compare_element)
+  | (boolean_not_op ~ compare_element)
+  | ("(" ~ compare_element ~ ")")
+}
+left_element      = _{
+    variable
+}
+compute_expr      =  {
+    ("(" ~ right_element ~ ")" ~ bin_op ~ right_element)
+  | (variable ~ bin_op ~ (("(" ~ right_element ~ ")") | right_element))
+  | (function_expr ~ bin_op ~ (("(" ~ right_element ~ ")") | right_element))
+}
+
+function_expr = {
+    variable ~ (("(" ~ (right_element) ~ ("," ~ right_element)* ~ ")") | ("(" ~ ")"))
+}
+
+assignment_expr      = { left_element ~ "为" ~ right_element }
+create_variable_expr = { "令" ~ left_element ~ "为" ~ right_element }
+
+// Define basic rules for the Chinese programming language
+
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+
+// Define the basic tokens
+number   = @{ ASCII_DIGIT+ }
+han_char = _{ ('\u{4e00}'..'\u{9FFF}') | ('\u{3400}'..'\u{4DBF}') | ('\u{20000}'..'\u{2A6DF}') | ('\u{2A700}'..'\u{2B739}') | ('\u{2B740}'..'\u{2B81D}') | ('\u{2B820}'..'\u{2CEA1}') | ('\u{2CEB0}'..'\u{2EBE0}') | ('\u{30000}'..'\u{3134A}') | ('\u{31350}'..'\u{323AF}') }
+variable = @{ (ASCII_ALPHA | han_char) ~ (ASCII_ALPHA | han_char | ASCII_DIGIT)* }
+
+// Define binary operators
+bin_op = @{ "+" | "-" | "*" | "/" }
+
+batch_expr = {
+    "始" ~ (expr ~ ";")+ ~ "终"
+}
+
+// Define if statement
+if_statement    = { ("若" ~ compare_element ~ "则" ~ expr) | ("若" ~ compare_element ~ "则" ~ batch_expr) ~ else_expr* }
+else_expr       = _{ "否则" ~ (expr | batch_expr) }
+time_check_expr = {
+    "次数" ~ (compute_expr | function_expr | number | variable)
+}
+loop_statement  = { "重复" ~ "(" ~ (time_check_expr | compare_element) ~ ")" ~ (batch_expr | expr) }
+for_statement   = {
+    "由" ~ (compute_expr | function_expr | number | variable) ~ "至" ~ (compute_expr | function_expr | number | variable) ~ (batch_expr | expr)
+}
+array_loop      = { array_expr ~ "各" ~ variable ~ (batch_expr | expr) }
+
+function_declare_statement = { "函数" ~ function_expr ~ batch_expr }
