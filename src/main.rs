@@ -1,5 +1,5 @@
 extern crate pest_derive;
-use std::{collections::HashMap, fmt::Display, rc::Rc};
+use std::{any::Any, borrow::BorrowMut, collections::HashMap, fmt::Display, hash::Hash, rc::Rc};
 
 use pest::{
     error::{Error, ErrorVariant},
@@ -106,7 +106,7 @@ fn parse_input(input: &str) -> Result<Vec<ASTNode>, Error<Rule>> {
     Ok(asts)
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum Operator {
     Plus,
     Minus,
@@ -118,223 +118,161 @@ enum Operator {
 
 impl Operator {
     pub fn operate(&self, first: &Object, second: &Object) -> Result<Object, ExecuteError> {
-        if DataType::Void.eq(&first.data_type) || DataType::Void.eq(&second.data_type) {
+        if Object::VoidObject.eq(&first) || Object::VoidObject.eq(&second) {
             return Err(ExecuteError {
-                msg: "no operator for Void data",
+                msg: "no operator for Void data".to_string(),
             });
         }
-        if DataType::Null.eq(&first.data_type) || DataType::Null.eq(&second.data_type) {
+        if Object::NullObject.eq(&first) || Object::NullObject.eq(&second) {
             return Err(ExecuteError {
-                msg: "null point exception",
+                msg: "null point exception".to_string(),
             });
         }
-        if !first.data_type.eq(&second.data_type)
-            && (DataType::BooleanType.eq(&first.data_type)
-                || DataType::BooleanType.eq(&second.data_type))
+        if first != second
+            && (matches!(first, Object::BooleanObject(_))
+                || matches!(second, Object::BooleanObject(_)))
         {
             return Err(ExecuteError {
-                msg: format!(
-                    "no operator for {} and {}",
-                    first.data_type, second.data_type
-                )
-                .as_str(),
+                msg: format!("no operator for {:?} and {:?}", first, second),
             });
         }
         match self {
             Operator::Plus => {
-                if DataType::BooleanType.eq(&first.data_type)
-                    || DataType::BooleanType.eq(&second.data_type)
+                if matches!(first, Object::BooleanObject(_))
+                    || matches!(second, Object::BooleanObject(_))
                 {
                     return Err(ExecuteError {
-                        msg: "boolean can not be plused",
+                        msg: "boolean can not be plused".to_string(),
                     });
                 }
-                if DataType::StringType.eq(&first.data_type)
-                    || DataType::StringType.eq(&second.data_type)
+                if matches!(first, Object::StringObject(_))
+                    || matches!(second, Object::StringObject(_))
                 {
-                    return Ok(Object {
-                        data_type: DataType::StringType,
-                        data: first.data + &second.data,
-                    });
+                    return Ok(Object::StringObject(Rc::new(
+                        first.to_string() + &second.to_string(),
+                    )));
                 }
-                if DataType::IntegerType.eq(&first.data_type)
-                    || DataType::IntegerType.eq(&second.data_type)
-                {
-                    return Ok(Object {
-                        data_type: DataType::StringType,
-                        data: (first.data.parse::<i64>().or(Err(ExecuteError {
-                            msg: &format!("parse to integer error, data value = {}", first.data),
-                        }))? + second.data.parse::<i64>().or(Err(ExecuteError {
-                            msg: &format!("parse to integer error, data value = {}", second.data),
-                        }))?)
-                        .to_string(),
-                    });
+                if let (Object::IntegerObject(f), Object::IntegerObject(s)) = (first, second) {
+                    return Ok(Object::IntegerObject(f + s));
                 }
                 return Err(ExecuteError {
                     msg: format!(
-                        "no PLUS operator can be used for {} and {}",
-                        first.data_type, second.data_type
-                    )
-                    .as_str(),
+                        "no PLUS operator can be used for {:?} and {:?}",
+                        first, second
+                    ),
                 });
             }
             Operator::Minus => {
-                if DataType::IntegerType.eq(&first.data_type)
-                    && DataType::IntegerType.eq(&second.data_type)
-                {
-                    return Ok(Object {
-                        data_type: DataType::StringType,
-                        data: (first.data.parse::<i64>().or(Err(ExecuteError {
-                            msg: &format!("parse to integer error, data value = {}", first.data),
-                        }))? - second.data.parse::<i64>().or(Err(ExecuteError {
-                            msg: &format!("parse to integer error, data value = {}", second.data),
-                        }))?)
-                        .to_string(),
-                    });
+                if let (Object::IntegerObject(f), Object::IntegerObject(s)) = (first, second) {
+                    return Ok(Object::IntegerObject(f - s));
                 }
                 return Err(ExecuteError {
                     msg: format!(
-                        "no MINUS operator can be used for {} and {}",
-                        first.data_type, second.data_type
-                    )
-                    .as_str(),
+                        "no MINUS operator can be used for {:?} and {:?}",
+                        first, second
+                    ),
                 });
             }
             Operator::Multi => {
-                if DataType::IntegerType.eq(&first.data_type)
-                    && DataType::IntegerType.eq(&second.data_type)
-                {
-                    return Ok(Object {
-                        data_type: DataType::StringType,
-                        data: (first.data.parse::<i64>().or(Err(ExecuteError {
-                            msg: &format!("parse to integer error, data value = {}", first.data),
-                        }))? * second.data.parse::<i64>().or(Err(ExecuteError {
-                            msg: &format!("parse to integer error, data value = {}", second.data),
-                        }))?)
-                        .to_string(),
-                    });
+                if let (Object::IntegerObject(f), Object::IntegerObject(s)) = (first, second) {
+                    return Ok(Object::IntegerObject(f * s));
                 }
                 return Err(ExecuteError {
                     msg: format!(
-                        "no MULTI operator can be used for {} and {}",
-                        first.data_type, second.data_type
-                    )
-                    .as_str(),
+                        "no MULTI operator can be used for {:?} and {:?}",
+                        first, second
+                    ),
                 });
             }
             Operator::Divide => {
-                if DataType::IntegerType.eq(&first.data_type)
-                    && DataType::IntegerType.eq(&second.data_type)
-                {
-                    return Ok(Object {
-                        data_type: DataType::StringType,
-                        data: (first.data.parse::<i64>().or(Err(ExecuteError {
-                            msg: &format!("parse to integer error, data value = {}", first.data),
-                        }))? / second.data.parse::<i64>().or(Err(ExecuteError {
-                            msg: &format!("parse to integer error, data value = {}", second.data),
-                        }))?)
-                        .to_string(),
-                    });
+                if let (Object::IntegerObject(f), Object::IntegerObject(s)) = (first, second) {
+                    return Ok(Object::IntegerObject(f / s));
                 }
                 return Err(ExecuteError {
                     msg: format!(
-                        "no DIVIDE operator can be used for {} and {}",
-                        first.data_type, second.data_type
-                    )
-                    .as_str(),
+                        "no DIVIDE operator can be used for {:?} and {:?}",
+                        first, second
+                    ),
                 });
             }
             Operator::And => {
-                if DataType::BooleanType.eq(&first.data_type)
-                    && DataType::BooleanType.eq(&second.data_type)
-                {
-                    return Ok(Object {
-                        data_type: DataType::StringType,
-                        data: (first.data.parse::<bool>().or(Err(ExecuteError {
-                            msg: &format!("parse to integer error, data value = {}", first.data),
-                        }))? && second.data.parse::<bool>().or(Err(ExecuteError {
-                            msg: &format!("parse to integer error, data value = {}", second.data),
-                        }))?)
-                        .to_string(),
-                    });
+                if let (Object::BooleanObject(f), Object::BooleanObject(s)) = (first, second) {
+                    return Ok(Object::BooleanObject(*f && *s));
                 }
                 return Err(ExecuteError {
                     msg: format!(
-                        "no AND operator can be used for {} and {}",
-                        first.data_type, second.data_type
-                    )
-                    .as_str(),
+                        "no AND operator can be used for {:?} and {:?}",
+                        first, second
+                    ),
                 });
             }
             Operator::Or => {
-                if DataType::BooleanType.eq(&first.data_type)
-                    && DataType::BooleanType.eq(&second.data_type)
-                {
-                    return Ok(Object {
-                        data_type: DataType::StringType,
-                        data: (first.data.parse::<bool>().or(Err(ExecuteError {
-                            msg: &format!("parse to integer error, data value = {}", first.data),
-                        }))? || second.data.parse::<bool>().or(Err(ExecuteError {
-                            msg: &format!("parse to integer error, data value = {}", second.data),
-                        }))?)
-                        .to_string(),
-                    });
+                if let (Object::BooleanObject(f), Object::BooleanObject(s)) = (first, second) {
+                    return Ok(Object::BooleanObject(*f || *s));
                 }
                 return Err(ExecuteError {
                     msg: format!(
-                        "no OR operator can be used for {} and {}",
-                        first.data_type, second.data_type
-                    )
-                    .as_str(),
+                        "no OR operator can be used for {:?} and {:?}",
+                        first, second
+                    ),
                 });
             }
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 enum CompOperator {
     Bigger,
     Less,
     Equal,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum DataType {
-    StringType,
-    IntegerType,
-    BooleanType,
-    Null,
-    Void,
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum Object {
+    StringObject(Rc<String>),
+    IntegerObject(i64),
+    BooleanObject(bool),
+    ArrayObject(Vec<Object>),
+    NullObject,
+    VoidObject,
 }
 
-impl Display for DataType {
+impl Display for Object {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.to_string())
     }
 }
 
-#[derive(Clone)]
-struct Object {
-    data_type: DataType,
-    data: String,
-}
-
 impl Object {
-    pub fn void() -> Object {
-        Object {
-            data_type: DataType::Void,
-            data: String::new(),
+    pub fn to_string(&self) -> String {
+        match self {
+            Object::StringObject(str_data) => str_data.to_string(),
+            Object::IntegerObject(int_data) => int_data.to_string(),
+            Object::BooleanObject(bool_data) => {
+                if *bool_data { "true" } else { "false" }.to_string()
+            }
+            Object::ArrayObject(array_data) => {
+                let mut builder = String::from("[");
+                let mut first = true;
+                for item in array_data {
+                    if first {
+                        builder = builder + item.to_string().as_str();
+                        first = false;
+                    } else {
+                        builder = builder + "," + item.to_string().as_str();
+                    }
+                }
+                builder = builder + "]";
+                builder
+            }
+            Object::NullObject => "null".to_string(),
+            Object::VoidObject => "void".to_string(),
         }
     }
 }
 
-struct WorkSpace {
-    ast: ASTNode,
-    context: HashMap<&'static str, Object>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Clone)]
 enum ASTNode {
     // Define your AST nodes here based on the grammar
     Variable(String),
@@ -358,7 +296,7 @@ enum ASTNode {
     },
     FunctionDeclare {
         name: String,
-        params: Vec<Rc<ASTNode>>,
+        params: Vec<String>,
         body: Vec<Rc<ASTNode>>,
     },
     Not(Rc<ASTNode>),
@@ -395,62 +333,144 @@ enum ASTNode {
     NoOp,
 }
 
+struct RuntimeContext {
+    operation_param_stack: Vec<HashMap<String, Object>>,
+    global_context: Rc<HashMap<String, Object>>,
+    method_stack: HashMap<String, ASTNode>,
+}
+
+impl RuntimeContext {
+    pub fn new() -> RuntimeContext {
+        RuntimeContext {
+            operation_param_stack: Vec::new(),
+            global_context: Rc::new(HashMap::new()),
+            method_stack: HashMap::new(),
+        }
+    }
+    pub fn with_global_context(global_context: Rc<HashMap<String, Object>>) -> RuntimeContext {
+        RuntimeContext {
+            operation_param_stack: Vec::new(),
+            global_context,
+            method_stack: HashMap::new(),
+        }
+    }
+}
+
 struct ExecuteError {
-    msg: &'static str,
+    msg: String,
+}
+struct Workspace {
+    runtime_context: RuntimeContext,
 }
 
 impl ASTNode {
-    pub fn getValue(&self, context: HashMap<&str, Object>) -> Option<Object> {
+    pub fn getValue(&self, context: &HashMap<&str, Object>) -> Option<Object> {
         match self {
             ASTNode::Variable(variable_name) => context.get(variable_name.as_str()).cloned(),
-            ASTNode::StringConst(s) => Some(Object {
-                data_type: DataType::StringType,
-                data: s.clone(),
-            }),
-            ASTNode::Number(n) => Some(Object {
-                data_type: DataType::IntegerType,
-                data: n.to_string(),
-            }),
-            ASTNode::Boolean(b) => Some(Object {
-                data_type: DataType::BooleanType,
-                data: b.to_string(),
-            }),
-            ASTNode::Array(array) => Some(Object {}),
+            ASTNode::StringConst(s) => Some(Object::StringObject(Rc::new(s.clone()))),
+            ASTNode::Number(n) => Some(Object::IntegerObject(*n)),
+            ASTNode::Boolean(b) => Some(Object::BooleanObject(*b)),
+            ASTNode::Array(array) => {
+                let mut r = Vec::new();
+
+                for item in array {
+                    r.push(item.getValue(context)?);
+                }
+                Some(Object::ArrayObject(r))
+            }
             _ => None,
         }
     }
+}
+impl Workspace {
+    pub fn new() -> Workspace {
+        Workspace {
+            runtime_context: RuntimeContext::new(),
+        }
+    }
+    pub fn with_context(runtime_context: &RuntimeContext) -> Workspace {
+        Workspace {
+            runtime_context: RuntimeContext::with_global_context(
+                runtime_context.global_context.clone(),
+            ),
+        }
+    }
 
-    pub fn execute(
-        &self,
-        context: HashMap<&str, Object>,
-        method_context: HashMap<&str, ASTNode>,
-    ) -> Result<Object, ExecuteError> {
-        match self {
+    pub fn with_new_stack(
+        runtime_context: &RuntimeContext,
+        operation_param_stack: HashMap<String, Object>,
+    ) -> Workspace {
+        Workspace {
+            runtime_context: RuntimeContext {
+                operation_param_stack: vec![operation_param_stack],
+                global_context: runtime_context.global_context.clone(),
+                method_stack: HashMap::new(),
+            },
+        }
+    }
+
+    pub fn execute(&mut self, node: &ASTNode) -> Result<Object, ExecuteError> {
+        match node {
             ASTNode::AssingmentExpr { left, right } => {
-                let right_value = right.execute(context, method_context)?;
-                let variable = match **left {
-                    ASTNode::Variable(variable_name) => Ok(variable_name.clone()),
+                let right_value = self.execute(right)?;
+                let variable = match &**left {
+                    ASTNode::Variable(variable_name) => Ok(variable_name),
                     _ => Err(ExecuteError {
-                        msg: "variable is missing",
+                        msg: "variable is missing".to_string(),
                     }),
                 }?;
-                context.insert(&variable, right_value);
-                Ok(Object::void())
+                if let Some(operation_param) = self.runtime_context.operation_param_stack.last_mut()
+                {
+                    operation_param.insert(variable.clone(), right_value);
+                }
+                Ok(Object::VoidObject)
             }
             ASTNode::ComputeExpr { first, op, second } => Ok(match **op {
-                ASTNode::Op(op) => op.operate(
-                    &first.execute(context, method_context)?,
-                    &second.execute(context, method_context)?,
-                )?,
+                ASTNode::Op(op) => op.operate(&self.execute(first)?, &self.execute(&second)?)?,
                 _ => Err(ExecuteError {
-                    msg: "operator is missing",
+                    msg: "operator is missing".to_string(),
                 })?,
             }),
             ASTNode::FunctionCall { name, params } => {
-                let method = method_context.get(name).ok_or(Err(ExecuteError {
-                    msg: &format!("no method named {} found", name),
-                }))?;
-                method.execute(context, method_context);
+                let mut param_objs = Vec::new();
+                for param in params {
+                    let obj = self.execute(&**param)?;
+                    param_objs.push(obj);
+                }
+                let method =
+                    self.runtime_context
+                        .method_stack
+                        .get(name.as_str())
+                        .ok_or(ExecuteError {
+                            msg: format!("no method named {} found", name),
+                        })?;
+                let next_param_context = match method {
+                    ASTNode::FunctionDeclare {
+                        name,
+                        params,
+                        body: _,
+                    } => {
+                        let mut param_mapping = HashMap::new();
+                        let param_len = params.len();
+                        for i in (0..param_len).rev() {
+                            if let (Some(param_name), Some(param_data)) =
+                                (params.get(i), param_objs.pop())
+                            {
+                                param_mapping.insert(param_name.clone(), param_data);
+                            } else {
+                                Err(ExecuteError {
+                                    msg: format!("function {} need {} parameters, but {} parameters provided",name,param_len,param_objs.len())
+                                })?;
+                            }
+                        }
+                        param_mapping
+                    }
+                    _ => Err(ExecuteError {
+                        msg: "function has illegal format".to_string(),
+                    })?,
+                };
+                let mut w = Workspace::with_new_stack(&self.runtime_context, next_param_context);
+                return w.execute(method);
             }
             ASTNode::FunctionDeclare { name, params, body } => todo!(),
             ASTNode::Not(_) => todo!(),
@@ -473,7 +493,7 @@ impl ASTNode {
             } => todo!(),
             ASTNode::CompOp(_) => todo!(),
             ASTNode::BinaryCompare { first, op, second } => todo!(),
-            _ => None,
+            _ => todo!(),
         }
     }
 }
@@ -839,9 +859,21 @@ fn build_function_declare_statement(
             let head_node = build_function_expr(func_expr)?;
             let body_node = build_multi_expr(body)?;
             if let ASTNode::FunctionCall { name, params } = head_node {
+                let mut param_names = Vec::new();
+                for param in params {
+                    match &(*param) {
+                        ASTNode::Variable(name) => param_names.push(name.clone()),
+                        _ => Err(Error::new_from_span(
+                            ErrorVariant::CustomError {
+                                message: "function declare has syntax error".to_string(),
+                            },
+                            span,
+                        ))?,
+                    }
+                }
                 return Ok(ASTNode::FunctionDeclare {
                     name,
-                    params,
+                    params: param_names,
                     body: body_node,
                 });
             }
