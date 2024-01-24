@@ -294,6 +294,15 @@ enum ASTNode {
         name: String,
         params: Vec<Rc<ASTNode>>,
     },
+    /**
+     * 解析的时候不会生成，用于对funtionDeclare的执行逻辑的存储
+     * 便于与FunctionDeclare区分
+     */
+    FunctionExecute {
+        name: String,
+        params: Vec<String>,
+        body: Vec<Rc<ASTNode>>,
+    },
     FunctionDeclare {
         name: String,
         params: Vec<String>,
@@ -364,9 +373,14 @@ struct Workspace {
 }
 
 impl ASTNode {
-    pub fn getValue(&self, context: &HashMap<&str, Object>) -> Option<Object> {
+    pub fn getValue(&self, context: &RuntimeContext) -> Option<Object> {
         match self {
-            ASTNode::Variable(variable_name) => context.get(variable_name.as_str()).cloned(),
+            ASTNode::Variable(variable_name) => context
+                .operation_param_stack
+                .last()
+                .and_then(|x| x.get(variable_name))
+                .or(context.global_context.get(variable_name))
+                .cloned(),
             ASTNode::StringConst(s) => Some(Object::StringObject(Rc::new(s.clone()))),
             ASTNode::Number(n) => Some(Object::IntegerObject(*n)),
             ASTNode::Boolean(b) => Some(Object::BooleanObject(*b)),
@@ -472,9 +486,46 @@ impl Workspace {
                 let mut w = Workspace::with_new_stack(&self.runtime_context, next_param_context);
                 return w.execute(method);
             }
-            ASTNode::FunctionDeclare { name, params, body } => todo!(),
-            ASTNode::Not(_) => todo!(),
-            ASTNode::AssignmentExpr { left, right } => todo!(),
+            ASTNode::FunctionDeclare { name, params, body } => {
+                self.runtime_context.method_stack.insert(
+                    name.to_string(),
+                    ASTNode::FunctionExecute {
+                        name: name.clone(),
+                        params: params.clone(),
+                        body: body.clone(),
+                    },
+                );
+                Ok(Object::VoidObject)
+            }
+            ASTNode::FunctionExecute { name, params, body } => {
+                //由于在调用FuntionCall的时候已经将入参压栈，所以这里不需要对params进行处理
+                let len = body.len();
+                for i in 0..len - 1 {
+                    self.execute(&*body[i])?;
+                }
+                let ret = self.execute(&*body[len - 1])?;
+                Ok(ret)
+            }
+            ASTNode::Not(value) => {
+                let inner = value.getValue(&self.runtime_context).ok_or(ExecuteError {
+                    msg: format!(
+                        "NOT operation's content value calculate error, value = {:?} ",
+                        value
+                    ),
+                })?;
+                match inner {
+                    Object::BooleanObject(b) => Ok(Object::BooleanObject(!b)),
+                    _ => Err(ExecuteError {
+                        msg: format!(
+                            "inner value can not be used for NOT operation, value = {:?} ",
+                            value
+                        ),
+                    }),
+                }
+            }
+            ASTNode::AssignmentExpr { left, right } => {
+                //赋值语句本质上是将变量放到参数栈中
+            },
             ASTNode::IfStatement {
                 condition,
                 process,
