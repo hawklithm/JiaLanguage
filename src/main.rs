@@ -148,9 +148,9 @@ impl Operator {
                 if matches!(first, Object::StringObject(_))
                     || matches!(second, Object::StringObject(_))
                 {
-                    return Ok(Object::StringObject(Rc::new(
+                    return Ok(Object::StringObject(
                         first.to_string() + &second.to_string(),
-                    )));
+                    ));
                 }
                 if let (Object::IntegerObject(f), Object::IntegerObject(s)) = (first, second) {
                     return Ok(Object::IntegerObject(f + s));
@@ -230,7 +230,7 @@ enum CompOperator {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Object {
-    StringObject(Rc<String>),
+    StringObject(String),
     IntegerObject(i64),
     BooleanObject(bool),
     ArrayObject(Vec<Object>),
@@ -339,11 +339,12 @@ enum ASTNode {
         op: Rc<ASTNode>,
         second: Rc<ASTNode>,
     },
+    LoopTimeCheck(Rc<ASTNode>),
     NoOp,
 }
 
 struct RuntimeContext {
-    operation_param_stack: Vec<HashMap<String, Object>>,
+    operation_params: HashMap<String, Object>,
     global_context: Rc<HashMap<String, Object>>,
     method_stack: HashMap<String, ASTNode>,
 }
@@ -351,14 +352,14 @@ struct RuntimeContext {
 impl RuntimeContext {
     pub fn new() -> RuntimeContext {
         RuntimeContext {
-            operation_param_stack: Vec::new(),
+            operation_params: HashMap::new(),
             global_context: Rc::new(HashMap::new()),
             method_stack: HashMap::new(),
         }
     }
     pub fn with_global_context(global_context: Rc<HashMap<String, Object>>) -> RuntimeContext {
         RuntimeContext {
-            operation_param_stack: Vec::new(),
+            operation_params: HashMap::new(),
             global_context,
             method_stack: HashMap::new(),
         }
@@ -376,12 +377,11 @@ impl ASTNode {
     pub fn getValue(&self, context: &RuntimeContext) -> Option<Object> {
         match self {
             ASTNode::Variable(variable_name) => context
-                .operation_param_stack
-                .last()
-                .and_then(|x| x.get(variable_name))
+                .operation_params
+                .get(variable_name)
                 .or(context.global_context.get(variable_name))
                 .cloned(),
-            ASTNode::StringConst(s) => Some(Object::StringObject(Rc::new(s.clone()))),
+            ASTNode::StringConst(s) => Some(Object::StringObject(s.clone())),
             ASTNode::Number(n) => Some(Object::IntegerObject(*n)),
             ASTNode::Boolean(b) => Some(Object::BooleanObject(*b)),
             ASTNode::Array(array) => {
@@ -416,7 +416,7 @@ impl Workspace {
     ) -> Workspace {
         Workspace {
             runtime_context: RuntimeContext {
-                operation_param_stack: vec![operation_param_stack],
+                operation_params: operation_param_stack,
                 global_context: runtime_context.global_context.clone(),
                 method_stack: HashMap::new(),
             },
@@ -433,10 +433,9 @@ impl Workspace {
                         msg: "variable is missing".to_string(),
                     }),
                 }?;
-                if let Some(operation_param) = self.runtime_context.operation_param_stack.last_mut()
-                {
-                    operation_param.insert(variable.clone(), right_value);
-                }
+                self.runtime_context
+                    .operation_params
+                    .insert(variable.clone(), right_value);
                 Ok(Object::VoidObject)
             }
             ASTNode::ComputeExpr { first, op, second } => Ok(match **op {
@@ -525,13 +524,96 @@ impl Workspace {
             }
             ASTNode::AssignmentExpr { left, right } => {
                 //赋值语句本质上是将变量放到参数栈中
-            },
+                let variable_obj = self.execute(left)?;
+                let variable_name = match variable_obj {
+                    Object::StringObject(variable_name) => variable_name,
+                    _ => Err(ExecuteError {
+                        msg: format!(
+                            "variable declarement or assignment has syntax error, value = {:?} ",
+                            variable_obj
+                        ),
+                    })?,
+                };
+                let value_obj = self.execute(right)?;
+                self.runtime_context
+                    .operation_params
+                    .insert(variable_name, value_obj);
+                Ok(Object::VoidObject)
+            }
             ASTNode::IfStatement {
                 condition,
                 process,
                 else_process,
-            } => todo!(),
-            ASTNode::LoopStatement { condition, process } => todo!(),
+            } => {
+                let condition_obj = self.execute(&condition)?;
+                let condition_value = match condition_obj {
+                    Object::BooleanObject(b) => b,
+                    _ => Err(ExecuteError {
+                        msg: format!(
+                            "condition of IfStatement has syntax error, value = {:?} ",
+                            condition_obj
+                        ),
+                    })?,
+                };
+                if condition_value {
+                    let len = process.len();
+                    for i in 0..len - 1 {
+                        self.execute(&*process[i])?;
+                    }
+                    let ret = self.execute(&*process[len - 1])?;
+                    Ok(ret)
+                } else if let Some(else_process) = else_process {
+                    let len = else_process.len();
+                    for i in 0..len - 1 {
+                        self.execute(&*else_process[i])?;
+                    }
+                    let ret = self.execute(&*else_process[len - 1])?;
+                    Ok(ret)
+                } else {
+                    Ok(Object::VoidObject)
+                }
+            }
+            ASTNode::LoopStatement { condition, process } => match &**condition {
+                ASTNode::LoopTimeCheck(check_time) => {
+                    let time_count = self.execute(&check_time)?;
+                    let time_value = match time_count {
+                        Object::IntegerObject(value) => value,
+                        _ => Err(ExecuteError {
+                            msg: format!(
+                                "loop time checker must be integer value, value = {:?} ",
+                                time_count
+                            ),
+                        })?,
+                    };
+                    for _ in 0..time_value {
+                        for item in process {
+                            self.execute(item)?;
+                        }
+                    }
+                    Ok(Object::VoidObject)
+                }
+                other => {
+                    loop {
+                        let condition = self.execute(other)?;
+                        let condition_value = match condition {
+                            Object::BooleanObject(b) => b,
+                            _ => Err(ExecuteError {
+                                msg: format!(
+                                    "condition must be boolean value, value = {:?} ",
+                                    condition
+                                ),
+                            })?,
+                        };
+                        if !condition_value {
+                            break;
+                        }
+                        for item in process {
+                            self.execute(item)?;
+                        }
+                    }
+                    Ok(Object::VoidObject)
+                }
+            },
             ASTNode::ForStatement {
                 range_left,
                 range_right,
@@ -636,7 +718,7 @@ fn build_time_check_expr(pair: pest::iterators::Pair<Rule>) -> Result<ASTNode, E
     let span = pair.as_span();
     let mut item = pair.into_inner();
     if let Some(tmp) = item.next() {
-        return Ok(build_loop_condtion(tmp)?);
+        return Ok(ASTNode::LoopTimeCheck(Rc::new(build_loop_condtion(tmp)?)));
     }
     return Err(Error::new_from_span(
         ErrorVariant::CustomError {
