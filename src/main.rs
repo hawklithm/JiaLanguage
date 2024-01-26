@@ -47,7 +47,7 @@ abc 为 1;
 终;
 
 
-由 甲 至 乙 
+由 甲 至 乙 各 item
 始
 a 为 2;
 终;
@@ -62,7 +62,13 @@ a 为 2;
 终;
 输出();";
     match parse_input(test_data) {
-        Ok(ast) => println!("{:#?}", ast),
+        Ok(ast) => {
+            println!("{:#?}", ast);
+            let mut w = Workspace::new();
+            if let Err(e) = w.execute(&ASTNode::Root(ast)) {
+                println!("error happen, message: {}", e.msg);
+            }
+        }
         Err(e) => eprintln!("{}", e),
     }
 }
@@ -228,6 +234,54 @@ enum CompOperator {
     Equal,
 }
 
+impl CompOperator {
+    fn compare(&self, l: &Object, r: &Object) -> Result<bool, ExecuteError> {
+        Ok(
+            if let (Object::IntegerObject(left), Object::IntegerObject(right)) = (l, r) {
+                match self {
+                    CompOperator::Bigger => left > right,
+                    CompOperator::Less => left < right,
+                    CompOperator::Equal => left == right,
+                }
+            } else {
+                match self {
+                    CompOperator::Equal => match (l, r) {
+                        (Object::StringObject(s1), Object::StringObject(s2)) => s1.eq(s2),
+                        (Object::BooleanObject(b1), Object::BooleanObject(b2)) => b1 == b2,
+                        (Object::ArrayObject(a1), Object::ArrayObject(a2)) => {
+                            let l1 = a1.len();
+                            let l2 = a2.len();
+                            let mut answer = true;
+                            if l1 == l2 {
+                                for idx in 0..l1 {
+                                    if let Err(_e) = CompOperator::Equal.compare(&a1[idx], &a2[idx])
+                                    {
+                                        answer = false;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                answer = false;
+                            }
+                            answer
+                        }
+                        (Object::NullObject, Object::NullObject) => true,
+                        (_, Object::NullObject) => false,
+                        (Object::NullObject, _) => false,
+                        _ => false,
+                    },
+                    _ => Err(ExecuteError {
+                        msg: format!(
+                            "compare operator has syntax error! {:?} {:?} {:?}",
+                            l, self, r
+                        ),
+                    })?,
+                }
+            },
+        )
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Object {
     StringObject(String),
@@ -342,6 +396,7 @@ enum ASTNode {
     },
     LoopTimeCheck(Rc<ASTNode>),
     NoOp,
+    Root(Vec<ASTNode>),
 }
 
 struct RuntimeContext {
@@ -375,7 +430,7 @@ struct Workspace {
 }
 
 impl ASTNode {
-    pub fn getValue(&self, context: &RuntimeContext) -> Option<Object> {
+    pub fn get_value(&self, context: &RuntimeContext) -> Option<Object> {
         match self {
             ASTNode::Variable(variable_name) => context
                 .operation_params
@@ -389,7 +444,7 @@ impl ASTNode {
                 let mut r = Vec::new();
 
                 for item in array {
-                    r.push(item.getValue(context)?);
+                    r.push(item.get_value(context)?);
                 }
                 Some(Object::ArrayObject(r))
             }
@@ -425,6 +480,7 @@ impl Workspace {
     }
 
     pub fn execute(&mut self, node: &ASTNode) -> Result<Object, ExecuteError> {
+        println!("current = {:?}", node);
         match node {
             ASTNode::AssingmentExpr { left, right } => {
                 let right_value = self.execute(right)?;
@@ -507,7 +563,7 @@ impl Workspace {
                 Ok(ret)
             }
             ASTNode::Not(value) => {
-                let inner = value.getValue(&self.runtime_context).ok_or(ExecuteError {
+                let inner = value.get_value(&self.runtime_context).ok_or(ExecuteError {
                     msg: format!(
                         "NOT operation's content value calculate error, value = {:?} ",
                         value
@@ -645,10 +701,62 @@ impl Workspace {
                 array,
                 variable,
                 process,
-            } => todo!(),
-            ASTNode::CompOp(_) => todo!(),
-            ASTNode::BinaryCompare { first, op, second } => todo!(),
-            _ => todo!(),
+            } => {
+                let array_data = self.execute(&array)?;
+                let array = match array_data {
+                    Object::ArrayObject(data) => data,
+                    _ => Err(ExecuteError {
+                        msg: format!("should be array, value = {:?} ", array_data),
+                    })?,
+                };
+                let variable_object = self.execute(&variable)?;
+                let variable_name = match variable_object {
+                    Object::StringObject(variable_name) => variable_name,
+                    _ => Err(ExecuteError {
+                        msg: format!("should be variable name, value = {:?} ", variable_object),
+                    })?,
+                };
+                for item in array {
+                    self.runtime_context
+                        .operation_params
+                        .insert(variable_name.clone(), item.clone());
+                    for sub_process in process {
+                        self.execute(&sub_process)?;
+                    }
+                }
+                Ok(Object::VoidObject)
+            }
+            ASTNode::BinaryCompare { first, op, second } => {
+                let first_obj = self.execute(&first)?;
+                let second_obj = self.execute(&second)?;
+                let op = match &**op {
+                    ASTNode::CompOp(op) => op,
+                    _ => Err(ExecuteError {
+                        msg: format!("compare operator syntax error! value = {:?} ", op),
+                    })?,
+                };
+                Ok(Object::BooleanObject(op.compare(&first_obj, &second_obj)?))
+            }
+            ASTNode::Root(asts) => {
+                for ast in asts {
+                    self.execute(ast)?;
+                }
+                Ok(Object::VoidObject)
+            }
+            ASTNode::Variable(_)
+            | ASTNode::StringConst(_)
+            | ASTNode::Number(_)
+            | ASTNode::Boolean(_)
+            | ASTNode::Array(_) => {
+                if let Some(t) = node.get_value(&self.runtime_context) {
+                    Ok(t)
+                } else {
+                    Ok(Object::NullObject)
+                }
+            }
+            other => Err(ExecuteError {
+                msg: format!("can not execute for {:?} ", other),
+            })?,
         }
     }
 }
