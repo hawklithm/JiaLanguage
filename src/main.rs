@@ -326,6 +326,7 @@ enum ASTNode {
     ForStatement {
         range_left: Rc<ASTNode>,
         range_right: Rc<ASTNode>,
+        iterator_variable: Rc<ASTNode>,
         process: Vec<Rc<ASTNode>>,
     },
     ArrayLoop {
@@ -617,8 +618,29 @@ impl Workspace {
             ASTNode::ForStatement {
                 range_left,
                 range_right,
+                iterator_variable,
                 process,
-            } => todo!(),
+            } => {
+                let left = self.execute(&range_left)?;
+                let right = self.execute(&range_right)?;
+                let iterator_variable_name = self.execute(&iterator_variable)?;
+                if let (
+                    Object::IntegerObject(left_i),
+                    Object::IntegerObject(right_i),
+                    Object::StringObject(variable),
+                ) = (left, right, iterator_variable_name)
+                {
+                    for i in left_i..right_i {
+                        self.runtime_context
+                            .operation_params
+                            .insert(variable.clone(), Object::IntegerObject(i));
+                        for sub in process {
+                            self.execute(&sub)?;
+                        }
+                    }
+                }
+                Ok(Object::VoidObject)
+            }
             ASTNode::ArrayLoop {
                 array,
                 variable,
@@ -773,15 +795,30 @@ fn build_array_loop(pair: pest::iterators::Pair<Rule>) -> Result<ASTNode, Error<
 fn build_for_statement(pair: pest::iterators::Pair<Rule>) -> Result<ASTNode, Error<Rule>> {
     let span = pair.as_span();
     let mut items = pair.into_inner();
-    if let (Some(range_left), Some(range_right)) = (items.next(), items.next()) {
+    if let (Some(range_left), Some(range_right), Some(variable)) =
+        (items.next(), items.next(), items.next())
+    {
         let left_node = build_loop_condtion(range_left)?;
         let right_node = build_loop_condtion(range_right)?;
+        let temp_variable = {
+            let span = variable.as_span();
+            match variable.as_rule() {
+                Rule::variable => ASTNode::Variable(variable.to_string()),
+                _ => Err(Error::new_from_span(
+                    ErrorVariant::CustomError {
+                        message: "for statement has syntax error".to_string(),
+                    },
+                    span,
+                ))?,
+            }
+        };
 
         if let Some(expr) = items.next() {
             let process_node = build_multi_expr(expr)?;
             return Ok(ASTNode::ForStatement {
                 range_left: Rc::new(left_node),
                 range_right: Rc::new(right_node),
+                iterator_variable: Rc::new(temp_variable),
                 process: process_node,
             });
         }

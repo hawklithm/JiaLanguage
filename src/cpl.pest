@@ -80,7 +80,7 @@ time_check_expr = {
 }
 loop_statement  = { "重复" ~ "(" ~ (time_check_expr | compare_element) ~ ")" ~ (batch_expr | expr) }
 for_statement   = {
-    "由" ~ (compute_expr | function_expr | number | variable) ~ "至" ~ (compute_expr | function_expr | number | variable) ~ (batch_expr | expr)
+    "由" ~ (compute_expr | function_expr | number | variable) ~ "至" ~ (compute_expr | function_expr | number | variable) ~ "各" ~ variable ~ (batch_expr | expr)
 }
 array_loop      = { array_expr ~ "各" ~ variable ~ (batch_expr | expr) }
 
