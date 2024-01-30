@@ -1,6 +1,14 @@
 extern crate pest_derive;
-use std::{collections::HashMap, fmt::Display, rc::Rc};
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    fs::File,
+    io::Read,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
+use clap::{arg, command, value_parser, ArgAction, Command};
 use pest::{
     error::{Error, ErrorVariant},
     Parser,
@@ -11,79 +19,75 @@ use pest_derive::Parser;
 #[grammar = "cpl.pest"]
 struct MyParser;
 
+thread_local! {
+    static DEBUG_SWITCH: std::cell::RefCell<bool> = std::cell::RefCell::new(false);
+}
+
+#[macro_export]
+macro_rules! debug {
+    ($($arg:tt)*) => {
+        $crate::DEBUG_SWITCH.with(|flag| {
+            if *flag.borrow() {
+                 println!($($arg)*);
+            }
+        })
+    };
+}
+
+fn cli() -> Command {
+    command!() // requires `cargo` feature
+        .arg(
+            arg!(
+                -f --file <FILE> "Sets a custom config file"
+            )
+            // We don't have syntax yet for optional options, so manually calling `required`
+            .required(true)
+            .value_parser(value_parser!(PathBuf)),
+        )
+        .arg(
+            arg!(
+                -d --debug ... "Turn debugging information on"
+            )
+            .action(ArgAction::SetTrue),
+        )
+}
+
+fn read_file(file_path: &Path) -> std::io::Result<String> {
+    // 获取当前工作目录
+    let current_dir = std::env::current_dir()?;
+
+    // 构建绝对路径
+    let absolute_path = current_dir.join(file_path);
+
+    // 打开文件
+    let mut file = File::open(&absolute_path)?;
+
+    // 读取文件内容到字符串
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+
+    Ok(contents)
+}
+
 fn main() {
-    let test_data = "令 乾 为 10;
-重复(乾 大于 0)
-始
-乾 为 乾-1;
-终;
-令 乾 为 真;
-若 乾 则
-始
-甲 为 60;
-乙 为 60;
-终
-否则
-乙 为 40;
-函数 天晴()
-始
-输出(\"太阳升起来了\");
-终;
-函数 下雨()
-始
-输出(\"下雨了\");
-终;
-天晴();
-下雨();
-输出(甲+\"难于上青天\");
-令 甲 为 甲+\"难于上青天\";
-若 乾 则 甲 为 60;/*1243124124*/
-令 坤 为 20;
-若 乙 大于 坤 则 甲 为 4;
-令 甲 为 \"乾坤\";
-令 乙 为 \"李四\";
-令 乾 为 10000;
-令 坤 为 乙;
-若 乾 大于 1000 则
-始
-甲 为 60;
-乙 为 60;
-终
-否则
-始
-乙 为 40;
-甲 为 20;
-终;
+    let command = cli();
+    let matches = &command.get_matches();
+    let file_path = matches.get_one::<PathBuf>("file").unwrap();
+    let content = read_file(file_path).unwrap();
 
-重复(次数 3)
-始
-abc 为 1;
-终;
+    if matches.get_flag("debug") {
+        DEBUG_SWITCH.with(|x| *x.borrow_mut() = true);
+    }
 
-
-由 甲 至 乙 各 item
-始
-a 为 2;
-终;
-
-令 乾 为 [\"张三\",\"李四\"];
-函数 唱(变量)
-始
-  输出(变量+\",难于上青天\\n\");
-终;
-
-[\"张三\",\"李四\"] 各 人员 唱(\"能不能给我一首歌的时间\");
-
-输出(\"\\n\");";
-    match parse_input(test_data) {
+    match parse_input(content.as_str()) {
         Ok(ast) => {
-            println!("{:#?}", ast);
+            debug!("{:#?}", ast);
             let mut w = Workspace::new();
             if let Err(e) = w.execute(&ASTNode::Root(ast)) {
-                println!("error happen, message: {}", e.msg);
+                debug!("error happen, message: {}", e.msg);
             }
         }
-        Err(e) => eprintln!("{}", e),
+        Err(e) => debug!("{}", e),
     }
 }
 
@@ -115,12 +119,12 @@ fn parse_input(input: &str) -> Result<Vec<ASTNode>, Error<Rule>> {
     let pairs = MyParser::parse(Rule::chinese, input)?;
 
     for pair in pairs {
-        println!("run for = {:?}", pair);
+        debug!("run for = {:?}", pair);
         let r = build_single_normal_expr(pair)?;
         if ASTNode::NoOp.eq(&r) {
             continue;
         }
-        println!("result = {:?}", r);
+        debug!("result = {:?}", r);
         asts.push(r);
     }
     Ok(asts)
@@ -523,8 +527,8 @@ impl Workspace {
     }
 
     pub fn execute(&mut self, node: &ASTNode) -> Result<Object, ExecuteError> {
-        println!("current = {:?}", node);
-        println!("param map = {:?}", self.runtime_context.operation_params);
+        debug!("current = {:?}", node);
+        debug!("param map = {:?}", self.runtime_context.operation_params);
         match node {
             ASTNode::AssingmentExpr { left, right } => {
                 let right_value = self.execute(right)?;
@@ -890,7 +894,7 @@ fn build_compare_element(pair: pest::iterators::Pair<Rule>) -> Result<ASTNode, E
 }
 
 fn build_loop_condtion(pair: pest::iterators::Pair<Rule>) -> Result<ASTNode, Error<Rule>> {
-    println!("loop condition parse {:?}", pair);
+    debug!("loop condition parse {:?}", pair);
     let span = pair.as_span();
     let t = match pair.as_rule() {
         Rule::compute_expr => build_compute_expr(pair)?,
@@ -917,7 +921,7 @@ fn build_loop_condtion(pair: pest::iterators::Pair<Rule>) -> Result<ASTNode, Err
 }
 
 fn build_time_check_expr(pair: pest::iterators::Pair<Rule>) -> Result<ASTNode, Error<Rule>> {
-    println!("time check expr = {:?}", pair);
+    debug!("time check expr = {:?}", pair);
     let span = pair.as_span();
     let mut item = pair.into_inner();
     if let Some(tmp) = item.next() {
@@ -1352,4 +1356,86 @@ fn build_array_expr(pair: pest::iterators::Pair<Rule>) -> Result<ASTNode, Error<
         asts.push(Rc::new(build_right_element(item)?));
     }
     Ok(ASTNode::Array(asts))
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{parse_input, ASTNode, Workspace};
+
+    #[test]
+    fn test_main() {
+        let test_data = "令 乾 为 10;
+    重复(乾 大于 0)
+    始
+    乾 为 乾-1;
+    终;
+    令 乾 为 真;
+    若 乾 则
+    始
+    甲 为 60;
+    乙 为 60;
+    终
+    否则
+    乙 为 40;
+    函数 天晴()
+    始
+    输出(\"太阳升起来了\");
+    终;
+    函数 下雨()
+    始
+    输出(\"下雨了\");
+    终;
+    天晴();
+    下雨();
+    输出(甲+\"难于上青天\");
+    令 甲 为 甲+\"难于上青天\";
+    若 乾 则 甲 为 60;/*1243124124*/
+    令 坤 为 20;
+    若 乙 大于 坤 则 甲 为 4;
+    令 甲 为 \"乾坤\";
+    令 乙 为 \"李四\";
+    令 乾 为 10000;
+    令 坤 为 乙;
+    若 乾 大于 1000 则
+    始
+    甲 为 60;
+    乙 为 60;
+    终
+    否则
+    始
+    乙 为 40;
+    甲 为 20;
+    终;
+
+    重复(次数 3)
+    始
+    abc 为 1;
+    终;
+
+
+    由 甲 至 乙 各 item
+    始
+    a 为 2;
+    终;
+
+    令 乾 为 [\"张三\",\"李四\"];
+    函数 唱(变量)
+    始
+    输出(变量+\",难于上青天\\n\");
+    终;
+
+    [\"张三\",\"李四\"] 各 人员 唱(\"能不能给我一首歌的时间\");
+
+    输出(\"\\n\");";
+        match parse_input(test_data) {
+            Ok(ast) => {
+                debug!("{:#?}", ast);
+                let mut w = Workspace::new();
+                if let Err(e) = w.execute(&ASTNode::Root(ast)) {
+                    debug!("error happen, message: {}", e.msg);
+                }
+            }
+            Err(e) => debug!("{}", e),
+        }
+    }
 }
