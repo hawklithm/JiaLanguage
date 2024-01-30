@@ -1,5 +1,5 @@
 extern crate pest_derive;
-use std::{any::Any, borrow::BorrowMut, collections::HashMap, fmt::Display, hash::Hash, rc::Rc};
+use std::{collections::HashMap, fmt::Display, rc::Rc};
 
 use pest::{
     error::{Error, ErrorVariant},
@@ -12,8 +12,12 @@ use pest_derive::Parser;
 struct MyParser;
 
 fn main() {
-    let test_data = "重复(乾 大于 坤)
-abc 为 1;
+    let test_data = "令 乾 为 10;
+重复(乾 大于 0)
+始
+乾 为 乾-1;
+终;
+令 乾 为 真;
 若 乾 则
 始
 甲 为 60;
@@ -21,16 +25,26 @@ abc 为 1;
 终
 否则
 乙 为 40;
-若 天晴() 或 下雨() 则 甲 为 1;
-输出(变量+\"难于上青天\");
-令 甲 为 变量+\"难于上青天\";
+函数 天晴()
+始
+输出(\"太阳升起来了\");
+终;
+函数 下雨()
+始
+输出(\"下雨了\");
+终;
+天晴();
+下雨();
+输出(甲+\"难于上青天\");
+令 甲 为 甲+\"难于上青天\";
 若 乾 则 甲 为 60;/*1243124124*/
-若 乾 大于 坤 则 甲 为 60;
+令 坤 为 20;
+若 乙 大于 坤 则 甲 为 4;
 令 甲 为 \"乾坤\";
 令 乙 为 \"李四\";
 令 乾 为 10000;
 令 坤 为 乙;
-若 乾 则
+若 乾 大于 1000 则
 始
 甲 为 60;
 乙 为 60;
@@ -53,14 +67,14 @@ a 为 2;
 终;
 
 令 乾 为 [\"张三\",\"李四\"];
+函数 唱(变量)
+始
+  输出(变量+\",难于上青天\\n\");
+终;
 
 [\"张三\",\"李四\"] 各 人员 唱(\"能不能给我一首歌的时间\");
 
-函数 曰(变量)
-始
-  输出(变量+\"难于上青天\");
-终;
-输出();";
+输出(\"\\n\");";
     match parse_input(test_data) {
         Ok(ast) => {
             println!("{:#?}", ast);
@@ -271,10 +285,7 @@ impl CompOperator {
                         _ => false,
                     },
                     _ => Err(ExecuteError {
-                        msg: format!(
-                            "compare operator has syntax error! {:?} {:?} {:?}",
-                            l, self, r
-                        ),
+                        msg: format!("compare operator is illegal! {:?} {:?} {:?}", l, self, r),
                     })?,
                 }
             },
@@ -397,27 +408,38 @@ enum ASTNode {
     LoopTimeCheck(Rc<ASTNode>),
     NoOp,
     Root(Vec<ASTNode>),
+    /**
+     * 用于执行需要超出脚本外的逻辑，比如输出打印之类的
+     * 这个枚举中的字符串为底层实际执行逻辑的编码
+     */
+    Native(String, Vec<String>),
 }
 
 struct RuntimeContext {
     operation_params: HashMap<String, Object>,
     global_context: Rc<HashMap<String, Object>>,
+    global_method: Rc<HashMap<String, ASTNode>>,
     method_stack: HashMap<String, ASTNode>,
 }
 
 impl RuntimeContext {
-    pub fn new() -> RuntimeContext {
-        RuntimeContext {
-            operation_params: HashMap::new(),
-            global_context: Rc::new(HashMap::new()),
-            method_stack: HashMap::new(),
-        }
-    }
-    pub fn with_global_context(global_context: Rc<HashMap<String, Object>>) -> RuntimeContext {
+    // pub fn new() -> RuntimeContext {
+    //     RuntimeContext {
+    //         operation_params: HashMap::new(),
+    //         global_context: Rc::new(HashMap::new()),
+    //         method_stack: HashMap::new(),
+    //         global_method: Rc::new(HashMap::new()),
+    //     }
+    // }
+    pub fn with_global_context(
+        global_context: Rc<HashMap<String, Object>>,
+        global_method: Rc<HashMap<String, ASTNode>>,
+    ) -> RuntimeContext {
         RuntimeContext {
             operation_params: HashMap::new(),
             global_context,
             method_stack: HashMap::new(),
+            global_method,
         }
     }
 }
@@ -437,7 +459,11 @@ impl ASTNode {
                 .get(variable_name)
                 .or(context.global_context.get(variable_name))
                 .cloned(),
-            ASTNode::StringConst(s) => Some(Object::StringObject(s.clone())),
+            ASTNode::StringConst(s) => Some(if s.len() > 2 {
+                Object::StringObject(s.get(1..s.len() - 1)?.to_string())
+            } else {
+                Object::StringObject(String::new())
+            }),
             ASTNode::Number(n) => Some(Object::IntegerObject(*n)),
             ASTNode::Boolean(b) => Some(Object::BooleanObject(*b)),
             ASTNode::Array(array) => {
@@ -454,17 +480,33 @@ impl ASTNode {
 }
 impl Workspace {
     pub fn new() -> Workspace {
-        Workspace {
-            runtime_context: RuntimeContext::new(),
-        }
-    }
-    pub fn with_context(runtime_context: &RuntimeContext) -> Workspace {
+        let mut global_method = HashMap::new();
+        global_method.insert(
+            String::from("输出"),
+            ASTNode::FunctionExecute {
+                name: String::from("输出"),
+                params: vec![String::from("data")],
+                body: vec![Rc::new(ASTNode::Native(
+                    String::from("print"),
+                    vec![String::from("data")],
+                ))],
+            },
+        );
         Workspace {
             runtime_context: RuntimeContext::with_global_context(
-                runtime_context.global_context.clone(),
+                Rc::new(HashMap::new()),
+                Rc::new(global_method),
             ),
         }
     }
+    // pub fn with_context(runtime_context: &RuntimeContext) -> Workspace {
+    //     Workspace {
+    //         runtime_context: RuntimeContext::with_global_context(
+    //             runtime_context.global_context.clone(),
+    //             runtime_context.global_method.clone(),
+    //         ),
+    //     }
+    // }
 
     pub fn with_new_stack(
         runtime_context: &RuntimeContext,
@@ -475,12 +517,14 @@ impl Workspace {
                 operation_params: operation_param_stack,
                 global_context: runtime_context.global_context.clone(),
                 method_stack: HashMap::new(),
+                global_method: runtime_context.global_method.clone(),
             },
         }
     }
 
     pub fn execute(&mut self, node: &ASTNode) -> Result<Object, ExecuteError> {
         println!("current = {:?}", node);
+        println!("param map = {:?}", self.runtime_context.operation_params);
         match node {
             ASTNode::AssingmentExpr { left, right } => {
                 let right_value = self.execute(right)?;
@@ -507,15 +551,16 @@ impl Workspace {
                     let obj = self.execute(&**param)?;
                     param_objs.push(obj);
                 }
-                let method =
-                    self.runtime_context
-                        .method_stack
-                        .get(name.as_str())
-                        .ok_or(ExecuteError {
-                            msg: format!("no method named {} found", name),
-                        })?;
+                let method = self
+                    .runtime_context
+                    .method_stack
+                    .get(name.as_str())
+                    .or(self.runtime_context.global_method.get(name.as_str()))
+                    .ok_or(ExecuteError {
+                        msg: format!("no method named {} found", name),
+                    })?;
                 let next_param_context = match method {
-                    ASTNode::FunctionDeclare {
+                    ASTNode::FunctionExecute {
                         name,
                         params,
                         body: _,
@@ -524,9 +569,9 @@ impl Workspace {
                         let param_len = params.len();
                         for i in (0..param_len).rev() {
                             if let (Some(param_name), Some(param_data)) =
-                                (params.get(i), param_objs.pop())
+                                (params.get(i), param_objs.get(i))
                             {
-                                param_mapping.insert(param_name.clone(), param_data);
+                                param_mapping.insert(param_name.clone(), param_data.clone());
                             } else {
                                 Err(ExecuteError {
                                     msg: format!("function {} need {} parameters, but {} parameters provided",name,param_len,param_objs.len())
@@ -553,7 +598,11 @@ impl Workspace {
                 );
                 Ok(Object::VoidObject)
             }
-            ASTNode::FunctionExecute { name, params, body } => {
+            ASTNode::FunctionExecute {
+                name: _,
+                params: _,
+                body,
+            } => {
                 //由于在调用FuntionCall的时候已经将入参压栈，所以这里不需要对params进行处理
                 let len = body.len();
                 for i in 0..len - 1 {
@@ -581,13 +630,12 @@ impl Workspace {
             }
             ASTNode::AssignmentExpr { left, right } => {
                 //赋值语句本质上是将变量放到参数栈中
-                let variable_obj = self.execute(left)?;
-                let variable_name = match variable_obj {
-                    Object::StringObject(variable_name) => variable_name,
+                let variable_name = match &**left {
+                    ASTNode::Variable(variable_name) => variable_name.clone(),
                     _ => Err(ExecuteError {
                         msg: format!(
                             "variable declarement or assignment has syntax error, value = {:?} ",
-                            variable_obj
+                            left
                         ),
                     })?,
                 };
@@ -709,11 +757,10 @@ impl Workspace {
                         msg: format!("should be array, value = {:?} ", array_data),
                     })?,
                 };
-                let variable_object = self.execute(&variable)?;
-                let variable_name = match variable_object {
-                    Object::StringObject(variable_name) => variable_name,
+                let variable_name = match &**variable {
+                    ASTNode::Variable(name) => name,
                     _ => Err(ExecuteError {
-                        msg: format!("should be variable name, value = {:?} ", variable_object),
+                        msg: format!("should be variable name, value = {:?} ", variable),
                     })?,
                 };
                 for item in array {
@@ -753,6 +800,32 @@ impl Workspace {
                 } else {
                     Ok(Object::NullObject)
                 }
+            }
+            ASTNode::Native(code, params) => {
+                match code.as_str() {
+                    "print" => {
+                        for item in params {
+                            print!(
+                                "{}",
+                                self.runtime_context
+                                    .operation_params
+                                    .get(item)
+                                    .ok_or(ExecuteError {
+                                        msg: format!(
+                                            "parameter for native method [{}] is missing [{}] ",
+                                            code, item
+                                        ),
+                                    })?
+                                    .to_string()
+                                    .replace("\\n", "\n")
+                            );
+                        }
+                    }
+                    other => Err(ExecuteError {
+                        msg: format!("native method is missing {} ", other),
+                    })?,
+                }
+                Ok(Object::VoidObject)
             }
             other => Err(ExecuteError {
                 msg: format!("can not execute for {:?} ", other),
@@ -801,7 +874,7 @@ fn build_compare_element(pair: pest::iterators::Pair<Rule>) -> Result<ASTNode, E
     let t = match pair.as_rule() {
         Rule::bin_compare_expr => build_bin_compare_expr(pair)?,
         Rule::function_expr => build_function_expr(pair)?,
-        Rule::variable => ASTNode::Variable(String::from(pair.as_str())),
+        Rule::variable => build_variable(pair)?,
         Rule::boolean_expr => build_boolean_expr(pair)?,
         _ => ASTNode::Other,
     };
@@ -822,7 +895,7 @@ fn build_loop_condtion(pair: pest::iterators::Pair<Rule>) -> Result<ASTNode, Err
     let t = match pair.as_rule() {
         Rule::compute_expr => build_compute_expr(pair)?,
         Rule::function_expr => build_function_expr(pair)?,
-        Rule::variable => ASTNode::Variable(String::from(pair.as_str())),
+        Rule::variable => build_variable(pair)?,
         Rule::number => {
             if let Ok(tmp_int) = pair.as_str().parse::<i64>() {
                 ASTNode::Number(tmp_int)
@@ -877,7 +950,7 @@ fn build_array_loop(pair: pest::iterators::Pair<Rule>) -> Result<ASTNode, Error<
     if let (Some(array), Some(item), Some(expr)) = (items.next(), items.next(), items.next()) {
         let array_node = build_array_expr(array)?;
         let item_node = match item.as_rule() {
-            Rule::variable => Ok(ASTNode::Variable(String::from(item.as_str()))),
+            Rule::variable => build_variable(item),
             _ => Err(Error::new_from_span(
                 ErrorVariant::CustomError {
                     message: "for statement has syntax error".to_string(),
@@ -911,7 +984,7 @@ fn build_for_statement(pair: pest::iterators::Pair<Rule>) -> Result<ASTNode, Err
         let temp_variable = {
             let span = variable.as_span();
             match variable.as_rule() {
-                Rule::variable => ASTNode::Variable(variable.to_string()),
+                Rule::variable => build_variable(variable)?,
                 _ => Err(Error::new_from_span(
                     ErrorVariant::CustomError {
                         message: "for statement has syntax error".to_string(),
@@ -1012,7 +1085,7 @@ fn build_right_element(right_params: pest::iterators::Pair<Rule>) -> Result<ASTN
                 right_params.as_span(),
             )),
         )?)),
-        Rule::variable => Ok(ASTNode::Variable(String::from(right_params.as_str()))),
+        Rule::variable => build_variable(right_params),
         Rule::boolean_expr => build_boolean_expr(right_params),
         Rule::array_expr => build_array_expr(right_params),
         _ => Err(Error::new_from_span(
@@ -1028,7 +1101,7 @@ fn build_assignment_expr(pair: pest::iterators::Pair<Rule>) -> Result<ASTNode, E
     let mut items = pair.into_inner();
     if let (Some(left), Some(right)) = (items.next(), items.next()) {
         let left_node = match left.as_rule() {
-            Rule::variable => ASTNode::Variable(String::from(left.as_str())),
+            Rule::variable => build_variable(left)?,
             _ => ASTNode::Other,
         };
         if ASTNode::Other.eq(&left_node) {
@@ -1071,7 +1144,7 @@ fn build_create_variable_expr(pair: pest::iterators::Pair<Rule>) -> Result<ASTNo
     ))?;
 
     let left_node = match left_params.as_rule() {
-        Rule::variable => Ok(ASTNode::Variable(String::from(left_params.as_str()))),
+        Rule::variable => build_variable(left_params),
         _ => Err(Error::new_from_span(
             ErrorVariant::CustomError {
                 message: "unsupport syntax".to_string(),
@@ -1125,6 +1198,27 @@ fn build_compute_expr(pair: pest::iterators::Pair<Rule>) -> Result<ASTNode, Erro
             span,
         ));
     }
+}
+
+fn build_variable(pair: pest::iterators::Pair<Rule>) -> Result<ASTNode, Error<Rule>> {
+    let span = pair.as_span();
+    Ok(match pair.as_rule() {
+        Rule::variable => {
+            let name = String::from(pair.as_str());
+            //判断是否是保留字
+            if "真" == name || "假" == name {
+                ASTNode::Boolean("真" == name)
+            } else {
+                ASTNode::Variable(name)
+            }
+        }
+        _ => Err(Error::new_from_span(
+            ErrorVariant::CustomError {
+                message: "variable declare has syntax error".to_string(),
+            },
+            span,
+        ))?,
+    })
 }
 
 fn build_function_declare_statement(
@@ -1216,7 +1310,7 @@ fn build_boolean_expr(pair: pest::iterators::Pair<Rule>) -> Result<ASTNode, Erro
                 if let (Some(op), Some(second)) = (items.next(), items.next()) {
                     ASTNode::ComputeExpr {
                         first: Rc::new(if Rule::variable.eq(&first.as_rule()) {
-                            ASTNode::Variable(String::from(first.as_str()))
+                            build_variable(first)?
                         } else {
                             build_function_expr(first)?
                         }),
