@@ -87,7 +87,7 @@ fn main() {
                 debug!("error happen, message: {}", e.msg);
             }
         }
-        Err(e) => debug!("{}", e),
+        Err(e) => println!("{}", e),
     }
 }
 

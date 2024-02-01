@@ -45,12 +45,11 @@ left_element      = _{
 }
 compute_expr      =  {
     ("(" ~ right_element ~ ")" ~ bin_op ~ right_element)
-  | (variable ~ bin_op ~ (("(" ~ right_element ~ ")") | right_element))
-  | (function_expr ~ bin_op ~ (("(" ~ right_element ~ ")") | right_element))
+  | ((function_expr | string | number | variable | boolean_expr | array_expr) ~ bin_op ~ (("(" ~ right_element ~ ")") | right_element))
 }
 
 function_expr = {
-    variable ~ (("(" ~ (right_element) ~ ("," ~ right_element)* ~ ")") | ("(" ~ ")"))
+    variable ~ (("(" ~ right_element ~ ("," ~ right_element)* ~ ")") | ("(" ~ ")"))
 }
 
 assignment_expr      = { left_element ~ "为" ~ right_element }
@@ -73,15 +72,15 @@ batch_expr = {
 }
 
 // Define if statement
-if_statement    = { ("若" ~ compare_element ~ "则" ~ expr) | ("若" ~ compare_element ~ "则" ~ batch_expr) ~ else_expr* }
+if_statement    =  { ("若" ~ compare_element ~ "则" ~ expr) | ("若" ~ compare_element ~ "则" ~ batch_expr) ~ else_expr* }
 else_expr       = _{ "否则" ~ (expr | batch_expr) }
-time_check_expr = {
+time_check_expr =  {
     "次数" ~ (compute_expr | function_expr | number | variable)
 }
-loop_statement  = { "重复" ~ "(" ~ (time_check_expr | compare_element) ~ ")" ~ (batch_expr | expr) }
-for_statement   = {
+loop_statement  =  { "重复" ~ "(" ~ (time_check_expr | compare_element) ~ ")" ~ (batch_expr | expr) }
+for_statement   =  {
     "由" ~ (compute_expr | function_expr | number | variable) ~ "至" ~ (compute_expr | function_expr | number | variable) ~ "各" ~ variable ~ (batch_expr | expr)
 }
-array_loop      = { array_expr ~ "各" ~ variable ~ (batch_expr | expr) }
+array_loop      =  { array_expr ~ "各" ~ variable ~ (batch_expr | expr) }
 
 function_declare_statement = { "函数" ~ function_expr ~ batch_expr }
